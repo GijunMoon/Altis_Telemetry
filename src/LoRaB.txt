@@ -1,0 +1,136 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+
+#include "LoRaB.h"
+
+// 핀 정의
+#define LORA_B_TX_PIN 23
+#define LORA_B_RX_PIN 22
+
+// UART 인스턴스
+HardwareSerial LoRaB(2);
+
+unsigned long lastSend = 0;
+const unsigned long SEND_INTERVAL = 100; // 100ms
+
+// 센서 데이터 구조체
+typedef struct {
+  float accel_x, accel_y, accel_z;
+  float gyro_x, gyro_y, gyro_z;
+} SensorData_t;
+
+// AT 명령 전송
+void sendAT(HardwareSerial &serial, const char *cmd) {
+  serial.print(cmd);
+  serial.print("\r\n");
+  Serial.print("Sending to ");
+  Serial.print(&serial == &LoRaB ? "LoRaB" : "LoRaA");
+  Serial.print(": ");
+  Serial.println(cmd);
+  serial.flush();
+  delay(100); // 응답 대기 시간 줄임
+  String response = "";
+  unsigned long start = millis();
+  while (millis() - start < 500 && serial.available()) { // 타임아웃 500ms로 단축
+    response += serial.readStringUntil('\n');
+    delay(5);
+  }
+  response.trim();
+  Serial.print("  Response: ");
+  Serial.println(response.length() ? response : "No response");
+}
+
+// 수신 데이터 처리 (GCS 형식으로 변환)
+String processReceivedData(String resp) {
+  // +RCV=1,24,1.0,2.0,3.0,4.0,5.0,6.0 형식 가정
+  char buffer[128];
+  resp.toCharArray(buffer, sizeof(buffer));
+
+  // 쉼표로 토큰 분리
+  char *token = strtok(buffer + 5, ","); // +RCV= 건너뛰기
+  if (!token) return "";
+  int sender = atoi(token); // 주소
+  token = strtok(NULL, ",");
+  if (!token) return "";
+  int len = atoi(token); // 길이
+  token = strtok(NULL, ",");
+  if (!token) return "";
+
+  // 데이터 필드 파싱
+  float values[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  for (int i = 0; i < 6 && token; i++) {
+    values[i] = atof(token);
+    Serial.print("Parsed field ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.println(values[i]); // 디버깅
+    token = strtok(NULL, ",");
+  }
+
+  // GCS 형식으로 변환
+  char outputStr[100];
+  snprintf(outputStr, sizeof(outputStr),
+           "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
+           values[0], values[1], values[2],
+           values[3], values[4], values[5]);
+
+  return String(outputStr);
+}
+
+// 퐁 전송
+void sendPong(HardwareSerial &serial, int address) {
+  char cmd[32];
+  snprintf(cmd, sizeof(cmd), "AT+SEND=%d,4,PONG", address);
+  sendAT(serial, cmd);
+  Serial.print("Sent PONG to address ");
+  Serial.println(address);
+}
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) {
+    delay(10); // 시리얼 포트 연결 대기
+  }
+
+  // LoRaB 초기화 (초기 보드레이트 9600)
+  LoRaB.begin(9600, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
+  Serial.println("Initializing LoRa modules...");
+
+  // LoRa-B 초기화
+  Serial.println("Initializing LoRaB...");
+  sendAT(LoRaB, "AT");
+  sendAT(LoRaB, "AT+ADDRESS=1");
+  sendAT(LoRaB, "AT+NETWORKID=18");
+  sendAT(LoRaB, "AT+PARAMETER=9,7,1,12");
+  sendAT(LoRaB, "AT+BAND=915000000");
+  sendAT(LoRaB, "AT+IPR=115200");
+
+  // 보드레이트를 115200으로 변경
+  LoRaB.begin(115200, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
+  Serial.println("LoRaB baud rate changed to 115200");
+  Serial.println("Initialization complete");
+}
+
+void loop() {
+  // LoRa-B 수신 처리
+  if (LoRaB.available()) {
+    String resp = LoRaB.readStringUntil('\n');
+    resp.trim();
+    if (resp.startsWith("+RCV=")) {
+      Serial.print("B Rx: ");
+      Serial.println(resp);
+      if (resp.indexOf("PING") != -1) {
+        // PING 수신 시 즉시 PONG 응답
+        sendPong(LoRaB, 0); // LoRaB -> LoRaA
+      } else {
+        // 센서 데이터 처리
+        String dataStr = processReceivedData(resp);
+        if (dataStr.length()) {
+          Serial.print("Sending to GCS: ");
+          Serial.println(dataStr); // 디버깅
+          Serial.print(dataStr); // GCS로 전송 (\n 포함)
+        }
+      }
+    }
+  }
+}
