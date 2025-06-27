@@ -1,11 +1,10 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 
-#include "LoRaB.h"
 
 // 핀 정의
-#define LORA_B_TX_PIN 23
-#define LORA_B_RX_PIN 22
+#define LORA_B_TX_PIN 18
+#define LORA_B_RX_PIN 19
 
 // UART 인스턴스
 HardwareSerial LoRaB(2);
@@ -92,8 +91,8 @@ void setup() {
     delay(10); // 시리얼 포트 연결 대기
   }
 
-  // LoRaB 초기화 (초기 보드레이트 9600)
-  LoRaB.begin(9600, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
+  // LoRaB 초기화
+  LoRaB.begin(115200, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
   Serial.println("Initializing LoRa modules...");
 
   // LoRa-B 초기화
@@ -103,11 +102,7 @@ void setup() {
   sendAT(LoRaB, "AT+NETWORKID=18");
   sendAT(LoRaB, "AT+PARAMETER=9,7,1,12");
   sendAT(LoRaB, "AT+BAND=915000000");
-  sendAT(LoRaB, "AT+IPR=115200");
 
-  // 보드레이트를 115200으로 변경
-  LoRaB.begin(115200, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
-  Serial.println("LoRaB baud rate changed to 115200");
   Serial.println("Initialization complete");
 }
 

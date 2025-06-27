@@ -1,11 +1,11 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 
-// Pin definitions
+// 핀 정의
 #define LORA_A_TX_PIN 18
 #define LORA_A_RX_PIN 19
 
-// UART instance
+// UART 인스턴스
 HardwareSerial LoRaA(1);
 
 unsigned long lastSend = 0;
@@ -15,13 +15,13 @@ const unsigned long PING_INTERVAL = 1000; // 1s for ping
 unsigned long pingSentTime = 0;
 bool awaitingPong = false;
 
-// Sensor data structure
+// 센서 데이터 구조체
 typedef struct {
   float accel_x, accel_y, accel_z;
   float gyro_x, gyro_y, gyro_z;
 } SensorData_t;
 
-// Generate dummy sensor data
+// 센서 데이터 생성
 SensorData_t generateSensorData() {
   SensorData_t data;
   data.accel_x = 1.0;
@@ -33,7 +33,7 @@ SensorData_t generateSensorData() {
   return data;
 }
 
-// Send AT command with improved debugging
+// AT 명령 전송
 void sendAT(HardwareSerial &serial, const char *cmd) {
   serial.print(cmd);
   serial.print("\r\n");
@@ -42,31 +42,32 @@ void sendAT(HardwareSerial &serial, const char *cmd) {
   Serial.print(": ");
   Serial.println(cmd);
   serial.flush();
-  delay(500); // Increased delay for module response
+  delay(100); // 응답 대기 시간 줄임
   String response = "";
   unsigned long start = millis();
-  while (millis() - start < 1000) { // Increased timeout to 1s
-    if (serial.available()) {
-      char c = serial.read();
-      response += c;
-      Serial.print(c); // Print raw response for debugging
-    }
+  while (millis() - start < 500 && serial.available()) { // 타임아웃 500ms로 단축
+    response += serial.readStringUntil('\n');
+    delay(5);
   }
   response.trim();
-  Serial.print("\nTrimmed Response: ");
+  Serial.print("  Response: ");
   Serial.println(response.length() ? response : "No response");
 }
 
-// Send sensor data
+// 센서 데이터 전송
 void sendSensorData(HardwareSerial &serial, int address, SensorData_t data) {
   char cmd[128];
   char dataStr[100];
+
+  // GCS 형식: accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z
   snprintf(dataStr, sizeof(dataStr),
            "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
            data.accel_x, data.accel_y, data.accel_z,
            data.gyro_x, data.gyro_y, data.gyro_z);
+
   int len = strlen(dataStr);
   snprintf(cmd, sizeof(cmd), "AT+SEND=%d,%d,%s", address, len, dataStr);
+
   sendAT(serial, cmd);
   Serial.print("Sent data to address ");
   Serial.println(address);
@@ -74,7 +75,7 @@ void sendSensorData(HardwareSerial &serial, int address, SensorData_t data) {
   Serial.println(dataStr);
 }
 
-// Send ping
+// 핑 전송
 void sendPing(HardwareSerial &serial, int address) {
   char cmd[32];
   snprintf(cmd, sizeof(cmd), "AT+SEND=%d,4,PING", address);
@@ -83,10 +84,12 @@ void sendPing(HardwareSerial &serial, int address) {
   Serial.println(address);
 }
 
-// Calculate distance
+// 거리 계산
 void calculateDistance(unsigned long pongReceivedTime) {
   unsigned long rtt = pongReceivedTime - pingSentTime;
-  float distance = (rtt / 1000000.0) * (3.0e8 / 2.0); // Distance in meters
+  // 빛의 속도: 3x10^8 m/s, RTT는 왕복이므로 2로 나눔
+  // 마이크로초를 초로 변환 (rtt / 1000000.0)
+  float distance = (rtt / 1000000.0) * (3.0e8 / 2.0); // 단위: 미터
   Serial.print("RTT: ");
   Serial.print(rtt);
   Serial.println(" us");
@@ -98,19 +101,19 @@ void calculateDistance(unsigned long pongReceivedTime) {
 void setup() {
   Serial.begin(115200);
   while (!Serial) {
-    delay(10); // Wait for serial port
+    delay(10); // 시리얼 포트 연결 대기
   }
 
   LoRaA.begin(115200, SERIAL_8N1, LORA_A_RX_PIN, LORA_A_TX_PIN);
   Serial.println("Initializing LoRa modules...");
 
-  // Initialize LoRaA
+  // LoRa-A 초기화
   Serial.println("Initializing LoRaA...");
-  sendAT(LoRaA, "AT");              // Test communication
-  sendAT(LoRaA, "AT+ADDRESS=0");    // Set address
-  sendAT(LoRaA, "AT+NETWORKID=18"); // Set network ID
-  sendAT(LoRaA, "AT+PARAMETER=9,7,1,12"); // Set parameters
-  sendAT(LoRaA, "AT+BAND=915000000");     // Set frequency band
+  sendAT(LoRaA, "AT");
+  sendAT(LoRaA, "AT+ADDRESS=0");
+  sendAT(LoRaA, "AT+NETWORKID=18");
+  sendAT(LoRaA, "AT+PARAMETER=9,7,1,12");
+  sendAT(LoRaA, "AT+BAND=915000000");
   
   Serial.println("Initialization complete");
 }
@@ -118,14 +121,14 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // Send sensor data every 100ms
+  // 100ms마다 센서 데이터 전송
   if (now - lastSend >= SEND_INTERVAL) {
     lastSend = now;
     SensorData_t data = generateSensorData();
     sendSensorData(LoRaA, 1, data); // LoRaA -> LoRaB
   }
 
-  // Send ping every 1s
+  // 1초마다 핑 전송
   if (now - lastPing >= PING_INTERVAL && !awaitingPong) {
     lastPing = now;
     sendPing(LoRaA, 1); // LoRaA -> LoRaB
@@ -133,7 +136,7 @@ void loop() {
     awaitingPong = true;
   }
 
-  // Handle LoRaA responses
+  // LoRa-A 수신 처리
   if (LoRaA.available()) {
     String resp = LoRaA.readStringUntil('\n');
     resp.trim();
