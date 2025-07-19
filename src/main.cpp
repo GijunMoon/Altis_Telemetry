@@ -2,148 +2,81 @@
 #include <HardwareSerial.h>
 
 // Pin definitions
-#define LORA_A_TX_PIN 18
-#define LORA_A_RX_PIN 19
+#define LORA_B_TX_PIN 18
+#define LORA_B_RX_PIN 19
 
-// UART instance
-HardwareSerial LoRaA(1);
+#define SENSOR_FIELD_COUNT 16
 
-unsigned long lastSend = 0;
-unsigned long lastPing = 0;
-const unsigned long SEND_INTERVAL = 100; // 100ms for sensor data
-const unsigned long PING_INTERVAL = 1000; // 1s for ping
-unsigned long pingSentTime = 0;
-bool awaitingPong = false;
 
-// Sensor data structure
-typedef struct {
-  float accel_x, accel_y, accel_z;
-  float gyro_x, gyro_y, gyro_z;
-} SensorData_t;
+// UART instance for LoRaB
+HardwareSerial LoRaB(1);
 
-// Generate dummy sensor data
-SensorData_t generateSensorData() {
-  SensorData_t data;
-  data.accel_x = 1.0;
-  data.accel_y = 2.0;
-  data.accel_z = 3.0;
-  data.gyro_x = 4.0;
-  data.gyro_y = 5.0;
-  data.gyro_z = 6.0;
-  return data;
-}
-
-// Send AT command with improved debugging
-void sendAT(HardwareSerial &serial, const char *cmd) {
-  serial.print(cmd);
-  serial.print("\r\n");
-  Serial.print("Sending to ");
-  Serial.print(&serial == &LoRaA ? "LoRaA" : "LoRaB");
-  Serial.print(": ");
-  Serial.println(cmd);
-  serial.flush();
-  delay(500); // Increased delay for module response
-  String response = "";
-  unsigned long start = millis();
-  while (millis() - start < 1000) { // Increased timeout to 1s
-    if (serial.available()) {
-      char c = serial.read();
-      response += c;
-      Serial.print(c); // Print raw response for debugging
-    }
-  }
-  response.trim();
-  Serial.print("\nTrimmed Response: ");
-  Serial.println(response.length() ? response : "No response");
-}
-
-// Send sensor data
-void sendSensorData(HardwareSerial &serial, int address, SensorData_t data) {
-  char cmd[128];
-  char dataStr[100];
-  snprintf(dataStr, sizeof(dataStr),
-           "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
-           data.accel_x, data.accel_y, data.accel_z,
-           data.gyro_x, data.gyro_y, data.gyro_z);
-  int len = strlen(dataStr);
-  snprintf(cmd, sizeof(cmd), "AT+SEND=%d,%d,%s", address, len, dataStr);
-  sendAT(serial, cmd);
-  Serial.print("Sent data to address ");
-  Serial.println(address);
-  Serial.print("dataStr: ");
-  Serial.println(dataStr);
-}
-
-// Send ping
-void sendPing(HardwareSerial &serial, int address) {
-  char cmd[32];
-  snprintf(cmd, sizeof(cmd), "AT+SEND=%d,4,PING", address);
-  sendAT(serial, cmd);
-  Serial.print("Sent PING to address ");
-  Serial.println(address);
-}
-
-// Calculate distance
-void calculateDistance(unsigned long pongReceivedTime) {
-  unsigned long rtt = pongReceivedTime - pingSentTime;
-  float distance = (rtt / 1000000.0) * (3.0e8 / 2.0); // Distance in meters
-  Serial.print("RTT: ");
-  Serial.print(rtt);
-  Serial.println(" us");
-  Serial.print("Estimated Distance: ");
-  Serial.print(distance);
-  Serial.println(" meters");
-}
+#define SENSOR_FIELD_COUNT 16
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {
-    delay(10); // Wait for serial port
-  }
+  while (!Serial) delay(10);
 
-  LoRaA.begin(115200, SERIAL_8N1, LORA_A_RX_PIN, LORA_A_TX_PIN);
-  Serial.println("Initializing LoRa modules...");
+  LoRaB.begin(115200, SERIAL_8N1, LORA_B_RX_PIN, LORA_B_TX_PIN);
+  Serial.println("Initializing LoRaB module...");
 
-  // Initialize LoRaA
-  Serial.println("Initializing LoRaA...");
-  sendAT(LoRaA, "AT");              // Test communication
-  sendAT(LoRaA, "AT+ADDRESS=0");    // Set address
-  sendAT(LoRaA, "AT+NETWORKID=18"); // Set network ID
-  sendAT(LoRaA, "AT+PARAMETER=9,7,1,12"); // Set parameters
-  sendAT(LoRaA, "AT+BAND=915000000");     // Set frequency band
-  
-  Serial.println("Initialization complete");
+  LoRaB.print("AT\r\n");
+  delay(300);
+  LoRaB.print("AT+ADDRESS=1\r\n");
+  delay(300);
+  LoRaB.print("AT+NETWORKID=18\r\n");
+  delay(300);
+  LoRaB.print("AT+PARAMETER=9,7,1,12\r\n");
+  delay(300);
+  LoRaB.print("AT+BAND=915000000\r\n");
+  delay(300);
+
+  Serial.println("LoRaB initialization complete");
 }
 
 void loop() {
-  unsigned long now = millis();
-
-  // Send sensor data every 100ms
-  if (now - lastSend >= SEND_INTERVAL) {
-    lastSend = now;
-    SensorData_t data = generateSensorData();
-    sendSensorData(LoRaA, 1, data); // LoRaA -> LoRaB
-  }
-
-  // Send ping every 1s
-  if (now - lastPing >= PING_INTERVAL && !awaitingPong) {
-    lastPing = now;
-    sendPing(LoRaA, 1); // LoRaA -> LoRaB
-    pingSentTime = micros();
-    awaitingPong = true;
-  }
-
-  // Handle LoRaA responses
-  if (LoRaA.available()) {
-    String resp = LoRaA.readStringUntil('\n');
+  if (LoRaB.available()) {
+    String resp = LoRaB.readStringUntil('\n');
     resp.trim();
+
     if (resp.startsWith("+RCV=")) {
-      Serial.print("A Rx: ");
-      Serial.println(resp);
-      if (awaitingPong && resp.indexOf("PONG") != -1) {
-        unsigned long pongReceivedTime = micros();
-        calculateDistance(pongReceivedTime);
-        awaitingPong = false;
+      String payload = resp.substring(5);  // Remove "+RCV="
+
+      // Convert to C string
+      char raw[payload.length() + 1];
+      payload.toCharArray(raw, sizeof(raw));
+
+      char *fields[32];
+      int count = 0;
+
+      char *token = strtok(raw, ",");
+      while (token != NULL && count < 32) {
+        fields[count++] = token;
+        token = strtok(NULL, ",");
+      }
+
+      if (count >= 19) {
+        // time 대신 왜곡된 필드를 받는 경우가 있으니 field[2]를 time으로 간주
+        unsigned long time = strtoul(fields[2], NULL, 10);
+        float data[16];
+
+        for (int i = 0; i < 16; i++) {
+          data[i] = atof(fields[i + 3]); // Skip addr, len, time
+        }
+
+        Serial.print(time);
+        if (count >= 19) {
+            // 센서값 16개 (fields[3]~fields[18]까지)
+            for (int i = 3; i <= 17; i++) {
+                Serial.print(",");
+                Serial.print(fields[i]);
+            }
+            Serial.println();
+        }
+
+        Serial.println();
+      } else {
+        Serial.println("Invalid field count");
       }
     }
   }
